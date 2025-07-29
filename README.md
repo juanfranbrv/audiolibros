@@ -37,6 +37,62 @@ Esto usará la voz `es-ES-AlvaroNeural` a una velocidad de `-5%` y creará un ar
 python audiolibro_creator.py -t "tu_libro.txt" -o "mi_audiolibro.mp3" -v "es-MX-DaliaNeural" --rate=+10%
 ```
 
+## 🔧 Cómo Funciona
+
+### Proceso de Fragmentación
+
+El script divide tu archivo de texto en fragmentos más pequeños para procesarlos eficientemente. Esto es necesario porque:
+
+1. **Límites de la API**: Edge-TTS tiene límites en la longitud del texto que puede procesar en una sola llamada.
+2. **Eficiencia**: Procesar fragmentos más pequeños permite mejor control de errores y reanudación.
+3. **Memoria**: Evita problemas de memoria con archivos muy grandes.
+
+### Estrategias de Fragmentación
+
+El script ofrece dos estrategias diferentes:
+
+#### 🧠 Estrategia "Smart" (Por Defecto)
+- **Agrupa párrafos pequeños** en fragmentos más grandes (hasta ~2500 caracteres).
+- **Ideal para textos con diálogos** o párrafos cortos.
+- **Reduce significativamente** el número de llamadas a la API.
+- **Más rápido** para la mayoría de textos.
+
+#### 📝 Estrategia "Legacy"
+- **Un fragmento por párrafo** (excepto si es muy largo).
+- **Más preciso** para mantener la estructura original.
+- **Útil para textos** con párrafos muy largos.
+
+### Proceso Completo
+
+1. **Lectura del Archivo**: El script lee completamente tu archivo de texto.
+2. **Fragmentación**: Divide el texto usando la estrategia seleccionada.
+3. **Creación de Fragmentos de Audio**: 
+   - Crea una carpeta temporal `temp_audio_chunks/`
+   - Convierte cada fragmento de texto a audio MP3 individual
+   - Los archivos se nombran como `chunk_0000.mp3`, `chunk_0001.mp3`, etc.
+4. **Concatenación Final**: 
+   - Usa FFmpeg para unir todos los fragmentos en orden
+   - Crea el archivo MP3 final
+   - Limpia automáticamente los archivos temporales
+
+### Sistema de Reanudación
+
+Si interrumpes el proceso:
+- **Los fragmentos ya creados se conservan** en la carpeta `temp_audio_chunks/`
+- **Al volver a ejecutar**, el script detecta los fragmentos existentes
+- **Continúa desde donde se quedó**, sin perder el progreso
+- **Solo se borran los temporales** cuando el proceso termina con éxito
+
+### Archivos Temporales
+
+Durante el proceso se crean:
+- `temp_audio_chunks/chunk_0000.mp3` - Primer fragmento
+- `temp_audio_chunks/chunk_0001.mp3` - Segundo fragmento
+- `temp_audio_chunks/filelist.txt` - Lista para FFmpeg
+- ... y así sucesivamente
+
+**Nota**: Estos archivos se eliminan automáticamente al finalizar, pero se conservan si interrumpes el proceso.
+
 ## 📋 Requisitos
 
 - Python 3.8+
