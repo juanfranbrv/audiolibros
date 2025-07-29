@@ -30,14 +30,40 @@ python audiolibro_creator.py --list-voices
 ```bash
 python audiolibro_creator.py -t "tu_libro.txt"
 ```
-Esto usará la voz `es-ES-AlvaroNeural` a una velocidad de `-5%` y creará un archivo `tu_libro.mp3`.
+Esto usará la voz `es-ES-AlvaroNeural` a una velocidad de `-5%` y creará un archivo `tu_libro.mp3` en `D:\AUDIOLIBROS\tu_libro\`.
 
 **Uso Personalizado:**
 ```bash
 python audiolibro_creator.py -t "tu_libro.txt" -o "mi_audiolibro.mp3" -v "es-MX-DaliaNeural" --rate=+10%
 ```
+Esto creará el archivo en `D:\AUDIOLIBROS\mi_audiolibro\mi_audiolibro.mp3`.
+
+**Especificar ruta completa:**
+```bash
+python audiolibro_creator.py -t "tu_libro.txt" -o "C:\MiCarpeta\mi_audiolibro.mp3"
+```
+Esto creará el archivo en la ruta especificada.
 
 ## 🔧 Cómo Funciona
+
+### Estructura de Directorios
+
+El script maneja los directorios de la siguiente manera:
+
+- **Fragmentos temporales**: Se crean en la carpeta del proyecto (`temp_audio_chunks/`)
+- **Archivo final**: Por defecto se guarda en `D:\AUDIOLIBROS\[nombre_del_archivo]\`
+- **Organización**: Cada audiolibro tiene su propia carpeta con el mismo nombre que el archivo final
+
+**Ejemplo de estructura:**
+```
+D:\AUDIOLIBROS\
+├── El cadiceno - Rosalia de Castro\
+│   └── El cadiceno - Rosalia de Castro.mp3
+├── Los diablos - Joe Abercrombie\
+│   └── Los diablos - Joe Abercrombie.mp3
+└── mi_audiolibro\
+    └── mi_audiolibro.mp3
+```
 
 ### Proceso de Fragmentación
 
@@ -85,13 +111,13 @@ Si interrumpes el proceso:
 
 ### Archivos Temporales
 
-Durante el proceso se crean:
+Durante el proceso se crean en la carpeta del proyecto:
 - `temp_audio_chunks/chunk_0000.mp3` - Primer fragmento
 - `temp_audio_chunks/chunk_0001.mp3` - Segundo fragmento
 - `temp_audio_chunks/filelist.txt` - Lista para FFmpeg
 - ... y así sucesivamente
 
-**Nota**: Estos archivos se eliminan automáticamente al finalizar, pero se conservan si interrumpes el proceso.
+**Nota**: Estos archivos se eliminan automáticamente al finalizar, pero se conservan si interrumpes el proceso. El archivo final se guarda en `D:\AUDIOLIBROS\[nombre_del_archivo]\` por defecto.
 
 ## 📋 Requisitos
 

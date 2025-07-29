@@ -18,6 +18,7 @@ console = Console()
 
 # --- Constantes ---
 TEMP_DIR = "temp_audio_chunks"
+DEFAULT_OUTPUT_DIR = "D:\\AUDIOLIBROS"
 DEFAULT_RETRIES = 3
 CHUNK_MAX_SIZE = 2500  # Caracteres máximos por fragmento para evitar problemas con la API
 
@@ -401,12 +402,28 @@ async def main():
         console.print(f"[bold red]Error: El archivo de entrada '{args.text_file}' no existe o no es un archivo válido.[/bold red]")
         sys.exit(1)
 
-    # Determinar el nombre del archivo de salida
+    # Determinar el nombre del archivo de salida y su directorio
     output_file = args.output_file
     if not output_file:
         base_name = os.path.splitext(os.path.basename(args.text_file))[0]
         output_file = f"{base_name}.mp3"
         console.print(f"\n[cyan]No se especificó archivo de salida. Usando por defecto:[/] [bold magenta]{output_file}[/bold magenta]")
+    
+    # Crear el directorio de salida por defecto si no existe
+    if not os.path.isabs(output_file):
+        # Si no es una ruta absoluta, usar el directorio por defecto
+        os.makedirs(DEFAULT_OUTPUT_DIR, exist_ok=True)
+        # Crear carpeta con el nombre del archivo (sin extensión)
+        base_name = os.path.splitext(output_file)[0]
+        output_dir = os.path.join(DEFAULT_OUTPUT_DIR, base_name)
+        os.makedirs(output_dir, exist_ok=True)
+        output_file = os.path.join(output_dir, output_file)
+        console.print(f"\n[cyan]Archivo de salida configurado en:[/] [bold magenta]{output_file}[/bold magenta]")
+    else:
+        # Si es una ruta absoluta, crear el directorio si no existe
+        output_dir = os.path.dirname(output_file)
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
     
     await process_audiobook_creation(args.text_file, output_file, args.voice, args.retries, args.rate, args.chunking_strategy)
 
