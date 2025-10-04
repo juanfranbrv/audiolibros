@@ -14,8 +14,36 @@ La herramienta está diseñada para ser robusta, eficiente y fácil de usar, ide
 - **Anti-Suspensión**: Evita que el equipo entre en modo de suspensión durante la creación de audiolibros largos (solo en Windows).
 - **Interfaz Amigable**: Usa la librería `rich` para una experiencia en la consola clara y atractiva, con barras de progreso y tiempo restante estimado.
 - **Autonomía**: No requiere instalar Microsoft Edge ni una clave de API.
+- **Interfaz Gráfica Moderna**: Nueva GUI con CustomTkinter para usuarios que prefieren interfaces visuales.
 
 ## 🚀 Uso
+
+### Interfaz Gráfica (GUI) - **NUEVO**
+
+La aplicación ahora incluye una interfaz gráfica moderna y fácil de usar:
+
+**Ejecutar GUI:**
+```bash
+python main.py --gui
+```
+
+**O simplemente:**
+```bash
+python main.py
+```
+Y elegir la opción 1 cuando se te pregunte.
+
+### Interfaz de Línea de Comandos (CLI)
+
+**Ejecutar CLI directamente:**
+```bash
+python main.py --cli
+```
+
+**O usar el script original:**
+```bash
+python audiolibro_creator.py -t "tu_libro.txt"
+```
 
 ### Listar Voces Disponibles
 
@@ -43,6 +71,28 @@ Esto creará el archivo en `D:\AUDIOLIBROS\mi_audiolibro\mi_audiolibro.mp3`.
 python audiolibro_creator.py -t "tu_libro.txt" -o "C:\MiCarpeta\mi_audiolibro.mp3"
 ```
 Esto creará el archivo en la ruta especificada.
+
+## 🖥️ Interfaz Gráfica (GUI)
+
+La nueva interfaz gráfica ofrece todas las funcionalidades del CLI con una experiencia visual moderna:
+
+### ✨ Características de la GUI
+
+- **🎨 Diseño Moderno**: Interfaz oscura con CustomTkinter
+- **📁 Selector de Archivos**: Botón para buscar archivos de texto fácilmente
+- **🎤 Configuración de Voz**: Dropdown con voces populares y botón para ver todas
+- **⚙️ Configuración Avanzada**: Ajustes de velocidad, estrategia y reintentos
+- **📊 Logs en Tiempo Real**: Área de texto con scroll para ver el progreso
+- **🔄 Procesamiento Asíncrono**: La interfaz no se bloquea durante la creación
+- **📂 Auto-completado**: El nombre del archivo de salida se completa automáticamente
+
+### 🎯 Flujo de Trabajo en la GUI
+
+1. **Seleccionar archivo**: Usa el botón "Buscar" para elegir tu archivo .txt
+2. **Configurar opciones**: Ajusta voz, velocidad y otros parámetros
+3. **Crear audiolibro**: Haz clic en "Crear Audiolibro"
+4. **Seguir progreso**: Observa los logs en tiempo real
+5. **¡Listo!**: El archivo se guarda en `D:\AUDIOLIBROS\[nombre]\`
 
 ## 🔧 Cómo Funciona
 
@@ -127,4 +177,6 @@ Durante el proceso se crean en la carpeta del proyecto:
 Las dependencias de Python se instalan fácilmente con:
 ```bash
 pip install -r requirements.txt
-``` 
+```
+
+**Nota**: Para usar la interfaz gráfica, se requiere `customtkinter` que ya está incluido en `requirements.txt`. 

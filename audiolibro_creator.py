@@ -7,11 +7,18 @@ import shutil
 import re
 from datetime import timedelta
 import ctypes
+import warnings
+import logging
 from rich.console import Console
 from rich.panel import Panel
 from rich.progress import Progress, BarColumn, TextColumn, TimeRemainingColumn
 from rich.table import Table
 # from pydub import AudioSegment #<- MOVEMOS ESTA LÍNEA
+
+# --- Silenciar warnings y logs de aiohttp/edge-tts ---
+warnings.filterwarnings("ignore")
+logging.getLogger("asyncio").setLevel(logging.CRITICAL)
+logging.getLogger("aiohttp").setLevel(logging.CRITICAL)
 
 # --- Inicialización de Rich Console ---
 console = Console()
@@ -30,9 +37,8 @@ def prevent_sleep():
             ES_CONTINUOUS = 0x80000000
             ES_SYSTEM_REQUIRED = 0x00000001
             ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)
-            console.print("[yellow]INFO:[/yellow] Suspensión del sistema desactivada temporalmente.")
-        except Exception as e:
-            console.print(f"[yellow]ADVERTENCIA:[/yellow] No se pudo desactivar la suspensión del sistema: {e}")
+        except Exception:
+            pass
 
 def allow_sleep():
     """Permite que el sistema entre en modo de suspensión (solo para Windows)."""
@@ -40,9 +46,8 @@ def allow_sleep():
         try:
             ES_CONTINUOUS = 0x80000000
             ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS)
-            console.print("[yellow]INFO:[/yellow] Suspensión del sistema reactivada.")
-        except Exception as e:
-            console.print(f"[yellow]ADVERTENCIA:[/yellow] No se pudo reactivar la suspensión del sistema: {e}")
+        except Exception:
+            pass
 
 def create_arg_parser():
     """Crea y configura el analizador de argumentos de la línea de comandos."""
@@ -116,16 +121,14 @@ async def list_available_voices():
 
 def chunk_text_legacy(text: str) -> list[str]:
     """[LEGACY] Divide el texto en fragmentos manejables basados en párrafos y longitud."""
-    console.print("[cyan]Dividiendo el texto con la estrategia 'legacy' (párrafo por párrafo)...[/cyan]")
-    
     paragraphs = re.split(r'\n\s*\n', text)
-    
+
     chunks = []
     for para in paragraphs:
         para = para.strip()
         if not para:
             continue
-            
+
         if len(para) > CHUNK_MAX_SIZE:
             sentences = re.split(r'(?<=[.!?])\s+', para)
             current_chunk = ""
@@ -139,16 +142,13 @@ def chunk_text_legacy(text: str) -> list[str]:
                 chunks.append(current_chunk.strip())
         else:
             chunks.append(para)
-            
-    console.print(f"[green]Texto dividido en {len(chunks)} fragmentos.[/green]")
+
     return chunks
 
 def chunk_text_smart(text: str) -> list[str]:
     """[SMART] Agrupa párrafos pequeños en fragmentos más grandes y eficientes."""
-    console.print("[cyan]Dividiendo el texto con la estrategia 'smart' (agrupando párrafos)...[/cyan]")
-    
     paragraphs = re.split(r'\n\s*\n', text)
-    
+
     final_chunks = []
     current_chunk = ""
 
@@ -178,15 +178,14 @@ def chunk_text_smart(text: str) -> list[str]:
                 current_chunk += "\n\n" + paragraph
             else:
                 current_chunk = paragraph
-        
+
         else:
             final_chunks.append(current_chunk)
             current_chunk = paragraph
 
     if current_chunk:
         final_chunks.append(current_chunk)
-        
-    console.print(f"[green]Texto dividido en {len(final_chunks)} fragmentos optimizados.[/green]")
+
     return final_chunks
 
 def chunk_text(text: str, strategy: str) -> list[str]:
@@ -196,7 +195,6 @@ def chunk_text(text: str, strategy: str) -> list[str]:
     elif strategy == 'legacy':
         return chunk_text_legacy(text)
     else:
-        console.print(f"[yellow]Estrategia de fragmentación '{strategy}' desconocida. Usando 'smart' por defecto.[/yellow]")
         return chunk_text_smart(text)
 
 async def synthesize_chunk(text: str, voice: str, output_path: str, rate: str) -> bool:
@@ -223,11 +221,11 @@ async def synthesize_chunk(text: str, voice: str, output_path: str, rate: str) -
 async def concatenate_chunks(output_file: str):
     """Concatena todos los archivos MP3 usando ffmpeg directamente."""
     console.print("\n[bold cyan]Concatenando archivos de audio con ffmpeg...[/bold cyan]")
-    
+
     # 1. Obtener la ruta absoluta del directorio temporal y del archivo de salida
     temp_dir_abs = os.path.abspath(TEMP_DIR)
     output_file_abs = os.path.abspath(output_file)
-    
+
     # 2. Obtener la lista ordenada de rutas de archivo ABSOLUTAS
     try:
         chunk_files_abs = sorted(
@@ -249,10 +247,10 @@ async def concatenate_chunks(output_file: str):
             safe_path = chunk_file.replace('\\', '/')
             f.write(f"file '{safe_path}'\n")
 
-    # 4. Construir y ejecutar el comando de ffmpeg con rutas absolutas
+    # 4. Construir y ejecutar el comando de ffmpeg con rutas absolutas (silenciando warnings)
     ffmpeg_executable = "C:\\ffmpeg\\bin\\ffmpeg.exe"
-    command = f'"{ffmpeg_executable}" -y -f concat -safe 0 -i "{filelist_path_abs}" -c copy "{output_file_abs}"'
-    
+    command = f'"{ffmpeg_executable}" -y -loglevel error -f concat -safe 0 -i "{filelist_path_abs}" -c copy "{output_file_abs}"'
+
     try:
         process = await asyncio.create_subprocess_shell(
             command,
@@ -260,10 +258,8 @@ async def concatenate_chunks(output_file: str):
             stderr=asyncio.subprocess.PIPE
         )
         _, stderr = await process.communicate()
-        
+
         if process.returncode != 0:
-            # ffmpeg a menudo imprime información útil a stderr incluso en éxito,
-            # así que solo lo mostramos si hay un código de retorno de error.
             console.print("[bold red]Error durante la concatenación con ffmpeg:[/bold red]")
             console.print(stderr.decode())
             sys.exit(1)
@@ -279,43 +275,48 @@ async def concatenate_chunks(output_file: str):
 def cleanup():
     """Elimina el directorio temporal si existe."""
     if os.path.isdir(TEMP_DIR):
-        console.print("[bold cyan]Limpiando archivos temporales...[/bold cyan]")
         shutil.rmtree(TEMP_DIR)
 
-async def process_audiobook_creation(text_file: str, output_file: str, voice: str, retries: int, rate: str, chunking_strategy: str):
+async def process_audiobook_creation(text_file: str, output_file: str, voice: str, retries: int, rate: str, chunking_strategy: str, status_callback=None, progress_callback=None):
     """Función orquestadora principal para la creación del audiolibro."""
     prevent_sleep()
     try:
         start_time = time.monotonic()
-        
+
+        # Determinar si estamos en modo GUI (si hay callbacks)
+        is_gui_mode = status_callback is not None
+
         # --- Panel de Inicio ---
-        summary = (
-            f"[bold]Archivo de entrada:[/] [cyan]{text_file}[/cyan]\n"
-            f"[bold]Archivo de salida:[/] [cyan]{output_file}[/cyan]\n"
-            f"[bold]Voz seleccionada:[/] [cyan]{voice}[/cyan]\n"
-            f"[bold]Velocidad:[/] [cyan]{rate}[/cyan]\n"
-            f"[bold]Estrategia de Fragmentación:[/] [cyan]{chunking_strategy}[/cyan]\n"
-            f"[bold]Reintentos por fragmento:[/] [cyan]{retries}[/cyan]"
-        )
-        console.print(Panel(summary, title="Generador de Audiolibros", border_style="green"))
-        
+        if not is_gui_mode:
+            summary = (
+                f"[bold]Archivo de entrada:[/] [cyan]{text_file}[/cyan]\n"
+                f"[bold]Archivo de salida:[/] [cyan]{output_file}[/cyan]\n"
+                f"[bold]Voz seleccionada:[/] [cyan]{voice}[/cyan]\n"
+                f"[bold]Velocidad:[/] [cyan]{rate}[/cyan]\n"
+                f"[bold]Estrategia de Fragmentación:[/] [cyan]{chunking_strategy}[/cyan]\n"
+                f"[bold]Reintentos por fragmento:[/] [cyan]{retries}[/cyan]"
+            )
+            console.print(Panel(summary, title="Generador de Audiolibros", border_style="green"))
+
         # --- Preparación ---
         # No borra el directorio si existe, permitiendo la reanudación.
         os.makedirs(TEMP_DIR, exist_ok=True)
-        
+
         try:
             with open(text_file, 'r', encoding='utf-8') as f:
                 text = f.read()
         except FileNotFoundError:
-            console.print(f"[bold red]Error: El archivo de texto '{text_file}' no fue encontrado.[/bold red]")
+            if not is_gui_mode:
+                console.print(f"[bold red]Error: El archivo de texto '{text_file}' no fue encontrado.[/bold red]")
             sys.exit(1)
         except Exception as e:
-            console.print(f"[bold red]Error al leer el archivo de texto: {e}[/bold red]")
+            if not is_gui_mode:
+                console.print(f"[bold red]Error al leer el archivo de texto: {e}[/bold red]")
             sys.exit(1)
-            
+
         text_chunks = chunk_text(text, chunking_strategy)
         total_chunks = len(text_chunks)
-        
+
         # --- Barra de Progreso ---
         progress_columns = [
             TextColumn("[progress.description]{task.description}"),
@@ -325,66 +326,107 @@ async def process_audiobook_creation(text_file: str, output_file: str, voice: st
             TimeRemainingColumn(),
         ]
 
-        with Progress(*progress_columns, console=console) as progress:
-            task = progress.add_task("Procesando fragmentos...", total=total_chunks)
-            
+        # Solo mostrar barra de progreso en modo CLI
+        if not is_gui_mode:
+            progress_context = Progress(*progress_columns, console=console)
+        else:
+            # En modo GUI, usar un contexto dummy que no hace nada
+            from contextlib import nullcontext
+            progress_context = nullcontext()
+
+        with progress_context as progress:
+            # Solo crear tarea si estamos en modo CLI
+            if not is_gui_mode:
+                task = progress.add_task("Procesando fragmentos...", total=total_chunks)
+
             for i, chunk in enumerate(text_chunks):
                 chunk_filename = os.path.join(TEMP_DIR, f"chunk_{i:04d}.mp3")
 
+                # Actualizar estado en GUI si existe callback
+                if status_callback:
+                    status_callback(f"Procesando fragmento {i+1}/{total_chunks}")
+                if progress_callback:
+                    progress_callback(i, total_chunks)
+
                 # --- Lógica de Reanudación ---
                 if os.path.exists(chunk_filename) and os.path.getsize(chunk_filename) > 0:
-                    console.print(f"[cyan]INFO:[/cyan] Fragmento {i+1} ya existe. Saltando.")
-                    progress.update(task, advance=1)
+                    if not is_gui_mode:
+                        progress.update(task, advance=1)
                     continue
 
                 success = False
                 for attempt in range(retries):
-                    progress.update(task, description=f"Procesando fragmento [cyan]({i+1}/{total_chunks})[/cyan]")
-                    
+                    if not is_gui_mode:
+                        progress.update(task, description=f"Procesando fragmento [cyan]({i+1}/{total_chunks})[/cyan]")
+
                     success = await synthesize_chunk(chunk, voice, chunk_filename, rate)
-                    
+
                     if success:
-                        if os.path.exists(chunk_filename):
-                            console.print(f"[green]ÉXITO:[/green] Fragmento {i+1} generado correctamente.")
                         break
                     else:
-                        console.print(f"[yellow]ADVERTENCIA:[/yellow] Fallo al generar el fragmento {i+1}. Reintentando (intento {attempt+1}/{retries})...")
+                        if not is_gui_mode:
+                            console.print(f"[yellow]ADVERTENCIA:[/yellow] Fallo al generar el fragmento {i+1}. Reintentando (intento {attempt+1}/{retries})...")
                         if attempt < retries - 1:
                             time.sleep(5)
-                
+
                 if not success:
-                    console.print(f"[bold red]ERROR FATAL:[/bold red] No se pudo generar el fragmento {i+1} después de {retries} intentos. Abortando.")
+                    if not is_gui_mode:
+                        console.print(f"[bold red]ERROR FATAL:[/bold red] No se pudo generar el fragmento {i+1} después de {retries} intentos. Abortando.")
                     # No se borra la carpeta para poder revisar los logs o archivos.
                     sys.exit(1)
-                
-                progress.update(task, advance=1)
+
+                if not is_gui_mode:
+                    progress.update(task, advance=1)
 
         # --- Concatenación y Limpieza ---
         # Solo se borra el directorio temporal si la concatenación es exitosa.
+        if status_callback:
+            status_callback("Concatenando fragmentos de audio...")
+        if progress_callback:
+            progress_callback(total_chunks, total_chunks)
+
         await concatenate_chunks(output_file)
         cleanup()
-        
+
         # --- Panel de Éxito ---
         end_time = time.monotonic()
         duration = timedelta(seconds=end_time - start_time)
-        
-        success_message = (
-            f"¡Audiolibro [bold green]'{output_file}'[/bold green] creado con éxito!\n\n"
-            f"Tiempo total empleado: [yellow]{str(duration).split('.')[0]}[/yellow]"
-        )
-        console.print(Panel(
-            success_message,
-            title="Proceso Completado",
-            border_style="green"
-        ))
+
+        if status_callback:
+            status_callback(f"¡Completado! Tiempo: {str(duration).split('.')[0]}")
+
+        if not is_gui_mode:
+            success_message = (
+                f"¡Audiolibro [bold green]'{output_file}'[/bold green] creado con éxito!\n\n"
+                f"Tiempo total empleado: [yellow]{str(duration).split('.')[0]}[/yellow]"
+            )
+            console.print(Panel(
+                success_message,
+                title="Proceso Completado",
+                border_style="green"
+            ))
     finally:
         allow_sleep()
 
+def suppress_asyncio_exceptions(loop, context):
+    """Suprimir excepciones de asyncio relacionadas con conexiones cerradas"""
+    exception = context.get("exception")
+    if exception and isinstance(exception, Exception):
+        # Silenciar solo errores de conexión de aiohttp
+        if "ClientConnectionError" in str(type(exception)) or "ConnectionResetError" in str(type(exception)):
+            return
+    # Para otros errores, usar el comportamiento por defecto
+    loop.default_exception_handler(context)
+
 async def main():
     """Función principal asíncrona que coordina todo."""
+    # Configurar manejador de excepciones de asyncio
+    loop = asyncio.get_event_loop()
+    loop.set_exception_handler(suppress_asyncio_exceptions)
+
     parser = create_arg_parser()
     args = parser.parse_args()
-    
+
     if args.list_voices:
         await list_available_voices()
         sys.exit(0)

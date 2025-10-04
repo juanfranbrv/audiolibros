@@ -1,2 +1,3 @@
 rich
-edge-tts 
+edge-tts
+customtkinter 
