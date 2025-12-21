@@ -1,3 +1,7 @@
 rich
 edge-tts>=7.2.7
-customtkinter 
+edge-tts>=7.2.7
+customtkinter
+pymupdf
+EbookLib
+beautifulsoup4 

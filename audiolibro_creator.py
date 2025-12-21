@@ -13,6 +13,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.progress import Progress, BarColumn, TextColumn, TimeRemainingColumn
 from rich.table import Table
+from text_extractor import get_text_content # Import helper module
 # from pydub import AudioSegment #<- MOVEMOS ESTA LÍNEA
 
 # --- Silenciar warnings y logs de aiohttp/edge-tts ---
@@ -57,7 +58,7 @@ def create_arg_parser():
     )
     parser.add_argument(
         "-t", "--text-file",
-        help="Ruta al archivo de texto de entrada (.txt).",
+        help="Ruta al archivo de entrada (.txt, .pdf, .epub).",
         required=False
     )
     parser.add_argument(
@@ -303,15 +304,15 @@ async def process_audiobook_creation(text_file: str, output_file: str, voice: st
         os.makedirs(TEMP_DIR, exist_ok=True)
 
         try:
-            with open(text_file, 'r', encoding='utf-8') as f:
-                text = f.read()
+            # Modified to use the new text extractor
+            text = get_text_content(text_file)
         except FileNotFoundError:
             if not is_gui_mode:
-                console.print(f"[bold red]Error: El archivo de texto '{text_file}' no fue encontrado.[/bold red]")
+                console.print(f"[bold red]Error: El archivo '{text_file}' no fue encontrado.[/bold red]")
             sys.exit(1)
         except Exception as e:
             if not is_gui_mode:
-                console.print(f"[bold red]Error al leer el archivo de texto: {e}[/bold red]")
+                console.print(f"[bold red]Error al leer y procesar el archivo: {e}[/bold red]")
             sys.exit(1)
 
         text_chunks = chunk_text(text, chunking_strategy)

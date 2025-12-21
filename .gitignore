@@ -61,4 +61,19 @@ coverage
 .Trash-* 
 
 temp_audio_chunks/
-Los diablos - Joe Abercrombie.txt
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Project specific
+temp_processed_input.txt
+comando.txt
+config.json
+.claude/
+*.lnk
+*.bat
+!run_gui.bat
+
+# Books (keep them out of the repo by default if they are large, 
+# but user might want them. Following "comitea todo" I might skip this 
+# or just be selective. Actually, let's just ignore the obvious temp files first.)

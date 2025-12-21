@@ -13,6 +13,10 @@ from audiolibro_creator import (
     create_arg_parser, list_available_voices, process_audiobook_creation,
     DEFAULT_OUTPUT_DIR, console, suppress_asyncio_exceptions
 )
+# Nuevo módulo de extracción
+from text_extractor import get_text_content
+# Nuevo módulo de configuración
+import config_manager
 
 # Configurar CustomTkinter
 ctk.set_appearance_mode("dark")
@@ -21,348 +25,248 @@ ctk.set_default_color_theme("blue")
 class AudiobookCreatorGUI:
     def __init__(self):
         self.root = ctk.CTk()
-        self.root.title("Generador de Audiolibros")
-        self.root.geometry("800x700")
+        self.root.title("Generador de Audiolibros v2.5")
+        self.root.geometry("1000x800")
         
+        # Cargar configuración
+        self.config = config_manager.load_config()
+
         # Variables
         self.text_file_path = tk.StringVar()
         self.output_file_name = tk.StringVar()
-        self.selected_voice = tk.StringVar(value="es-ES-AlvaroNeural")
-        self.rate_value = tk.StringVar(value="-5%")
-        self.chunking_strategy = tk.StringVar(value="smart")
-        self.retries_value = tk.IntVar(value=3)
+        
+        # Variables de Configuración
+        self.selected_voice = tk.StringVar(value=self.config["voice"])
+        self.rate_value = tk.StringVar(value=self.config["rate"])
+        self.chunking_strategy = tk.StringVar(value=self.config["chunking_strategy"])
+        self.retries_value = tk.IntVar(value=self.config["retries"])
 
-        # Cola para comunicación entre hilos
+        # Cola y Estado
         self.log_queue = queue.Queue()
-
-        # Variables de progreso
         self.start_time = None
-        self.total_chunks = 0
         
         self.setup_ui()
         self.update_log()
     
     def setup_ui(self):
-        # Frame principal
-        main_frame = ctk.CTkFrame(self.root)
-        main_frame.pack(fill="both", expand=True, padx=20, pady=20)
+        # 2 PESTAÑAS: Principal, Texto (Edición/Preview)
+        self.tabview = ctk.CTkTabview(self.root)
+        self.tabview.pack(fill="both", expand=True, padx=10, pady=10)
+
+        self.tab_main = self.tabview.add("Principal")
+        self.tab_text = self.tabview.add("Texto & Edición")
+
+        self.setup_main_tab()
+        self.setup_text_tab()
+
+    def setup_main_tab(self):
+        # --- SECCIÓN 1: ARCHIVO ---
+        file_frame = ctk.CTkFrame(self.tab_main)
+        file_frame.pack(fill="x", padx=10, pady=10)
         
-        # Título
-        title_label = ctk.CTkLabel(
-            main_frame, 
-            text="Generador de Audiolibros con Edge-TTS",
-            font=ctk.CTkFont(size=20, weight="bold")
-        )
-        title_label.pack(pady=20)
+        ctk.CTkLabel(file_frame, text="1. Selección de Archivo", font=ctk.CTkFont(weight="bold", size=16)).pack(anchor="w", padx=10, pady=5)
         
-        # Frame para configuración
-        config_frame = ctk.CTkFrame(main_frame)
-        config_frame.pack(fill="x", padx=20, pady=10)
+        # Entrada
+        input_row = ctk.CTkFrame(file_frame, fg_color="transparent")
+        input_row.pack(fill="x", padx=10, pady=5)
+        self.text_file_entry = ctk.CTkEntry(input_row, textvariable=self.text_file_path, placeholder_text="Selecciona PDF, EPUB o TXT...")
+        self.text_file_entry.pack(side="left", fill="x", expand=True, padx=(0,10))
+        ctk.CTkButton(input_row, text="📁 Buscar", command=self.browse_text_file, width=100).pack(side="right")
+
+        # Salida
+        out_row = ctk.CTkFrame(file_frame, fg_color="transparent")
+        out_row.pack(fill="x", padx=10, pady=5)
+        self.output_entry = ctk.CTkEntry(out_row, textvariable=self.output_file_name, placeholder_text="Nombre del archivo final...")
+        self.output_entry.pack(side="left", fill="x", expand=True, padx=(0,10))
+        ctk.CTkLabel(out_row, text=".mp3").pack(side="right")
+
+        # --- SECCIÓN 2: CONFIGURACIÓN (Compacta) ---
+        conf_frame = ctk.CTkFrame(self.tab_main)
+        conf_frame.pack(fill="x", padx=10, pady=10)
+        ctk.CTkLabel(conf_frame, text="2. Configuración de Voz", font=ctk.CTkFont(weight="bold", size=16)).pack(anchor="w", padx=10, pady=5)
+
+        grid_frame = ctk.CTkFrame(conf_frame, fg_color="transparent")
+        grid_frame.pack(fill="x", padx=10, pady=5)
+
+        # Fila 1
+        ctk.CTkLabel(grid_frame, text="Voz:").grid(row=0, column=0, padx=5, pady=5, sticky="e")
+        self.voice_combo = ctk.CTkComboBox(grid_frame, values=["es-ES-AlvaroNeural", "es-MX-DaliaNeural", "es-ES-ElviraNeural", "en-US-ChristopherNeural"], variable=self.selected_voice, width=200)
+        self.voice_combo.grid(row=0, column=1, padx=5, pady=5, sticky="w")
         
-        # Archivo de texto
-        text_frame = ctk.CTkFrame(config_frame)
-        text_frame.pack(fill="x", padx=10, pady=10)
+        ctk.CTkLabel(grid_frame, text="Velocidad:").grid(row=0, column=2, padx=5, pady=5, sticky="e")
+        ctk.CTkEntry(grid_frame, textvariable=self.rate_value, width=80).grid(row=0, column=3, padx=5, pady=5, sticky="w")
+
+        # Fila 2
+        ctk.CTkLabel(grid_frame, text="Estrategia:").grid(row=1, column=0, padx=5, pady=5, sticky="e")
+        ctk.CTkComboBox(grid_frame, values=["smart", "legacy"], variable=self.chunking_strategy, width=150).grid(row=1, column=1, padx=5, pady=5, sticky="w")
+
+        ctk.CTkLabel(grid_frame, text="Reintentos:").grid(row=1, column=2, padx=5, pady=5, sticky="e")
+        ctk.CTkEntry(grid_frame, textvariable=self.retries_value, width=80).grid(row=1, column=3, padx=5, pady=5, sticky="w")
+
+        # --- SECCIÓN 3: EJECUCIÓN Y LOGS ---
+        run_frame = ctk.CTkFrame(self.tab_main)
+        run_frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+        # Botón Grande
+        self.create_button = ctk.CTkButton(run_frame, text="▶ GENERAR AUDIOLIBRO", command=self.create_audiobook, height=50, font=ctk.CTkFont(size=18, weight="bold"), fg_color="green", hover_color="darkgreen")
+        self.create_button.pack(fill="x", padx=20, pady=15)
+
+        # Barra y Estado
+        self.status_label = ctk.CTkLabel(run_frame, text="Listo.", anchor="w")
+        self.status_label.pack(fill="x", padx=20)
         
-        ctk.CTkLabel(text_frame, text="Archivo de texto (.txt):", font=ctk.CTkFont(weight="bold")).pack(anchor="w", padx=10, pady=(10,5))
-        
-        text_file_frame = ctk.CTkFrame(text_frame)
-        text_file_frame.pack(fill="x", padx=10, pady=(0,10))
-        
-        self.text_file_entry = ctk.CTkEntry(text_file_frame, textvariable=self.text_file_path, width=400)
-        self.text_file_entry.pack(side="left", padx=(10,10), pady=10)
-        
-        ctk.CTkButton(
-            text_file_frame, 
-            text="Buscar", 
-            command=self.browse_text_file,
-            width=80
-        ).pack(side="right", padx=(0,10), pady=10)
-        
-        # Nombre del archivo de salida
-        output_frame = ctk.CTkFrame(config_frame)
-        output_frame.pack(fill="x", padx=10, pady=10)
-        
-        ctk.CTkLabel(output_frame, text="Nombre del archivo de salida:", font=ctk.CTkFont(weight="bold")).pack(anchor="w", padx=10, pady=(10,5))
-        
-        output_entry_frame = ctk.CTkFrame(output_frame)
-        output_entry_frame.pack(fill="x", padx=10, pady=(0,10))
-        
-        self.output_entry = ctk.CTkEntry(output_entry_frame, textvariable=self.output_file_name, width=400)
-        self.output_entry.pack(side="left", padx=(10,10), pady=10)
-        
-        ctk.CTkLabel(output_entry_frame, text=".mp3", font=ctk.CTkFont(size=14)).pack(side="left", pady=10)
-        
-        # Configuración de voz
-        voice_frame = ctk.CTkFrame(config_frame)
-        voice_frame.pack(fill="x", padx=10, pady=10)
-        
-        ctk.CTkLabel(voice_frame, text="Configuración de voz:", font=ctk.CTkFont(weight="bold")).pack(anchor="w", padx=10, pady=(10,5))
-        
-        # Voz
-        voice_row = ctk.CTkFrame(voice_frame)
-        voice_row.pack(fill="x", padx=10, pady=5)
-        
-        ctk.CTkLabel(voice_row, text="Voz:").pack(side="left", padx=(10,10))
-        self.voice_combo = ctk.CTkComboBox(
-            voice_row, 
-            values=["es-ES-AlvaroNeural", "es-MX-DaliaNeural", "es-ES-ElviraNeural"],
-            variable=self.selected_voice,
-            width=200
-        )
-        self.voice_combo.pack(side="left", padx=(0,20))
-        
-        ctk.CTkButton(
-            voice_row, 
-            text="Ver todas las voces", 
-            command=self.show_voices_window,
-            width=120
-        ).pack(side="right", padx=(0,10))
-        
-        # Velocidad
-        rate_row = ctk.CTkFrame(voice_frame)
-        rate_row.pack(fill="x", padx=10, pady=5)
-        
-        ctk.CTkLabel(rate_row, text="Velocidad:").pack(side="left", padx=(10,10))
-        self.rate_entry = ctk.CTkEntry(rate_row, textvariable=self.rate_value, width=100)
-        self.rate_entry.pack(side="left", padx=(0,10))
-        ctk.CTkLabel(rate_row, text="(ej: -5%, +10%)").pack(side="left")
-        
-        # Estrategia de fragmentación
-        strategy_row = ctk.CTkFrame(voice_frame)
-        strategy_row.pack(fill="x", padx=10, pady=5)
-        
-        ctk.CTkLabel(strategy_row, text="Estrategia:").pack(side="left", padx=(10,10))
-        self.strategy_combo = ctk.CTkComboBox(
-            strategy_row, 
-            values=["smart", "legacy"],
-            variable=self.chunking_strategy,
-            width=150
-        )
-        self.strategy_combo.pack(side="left", padx=(0,10))
-        
-        # Reintentos
-        retries_row = ctk.CTkFrame(voice_frame)
-        retries_row.pack(fill="x", padx=10, pady=5)
-        
-        ctk.CTkLabel(retries_row, text="Reintentos:").pack(side="left", padx=(10,10))
-        self.retries_spinbox = ctk.CTkEntry(retries_row, textvariable=self.retries_value, width=80)
-        self.retries_spinbox.pack(side="left", padx=(0,10))
-        
-        # Botones de acción
-        button_frame = ctk.CTkFrame(main_frame)
-        button_frame.pack(fill="x", padx=20, pady=20)
-        
-        self.create_button = ctk.CTkButton(
-            button_frame, 
-            text="Crear Audiolibro", 
-            command=self.create_audiobook,
-            height=40,
-            font=ctk.CTkFont(size=16, weight="bold")
-        )
-        self.create_button.pack(side="left", padx=(0,10), pady=10)
-        
-        self.stop_button = ctk.CTkButton(
-            button_frame, 
-            text="Detener", 
-            command=self.stop_process,
-            height=40,
-            state="disabled"
-        )
-        self.stop_button.pack(side="left", padx=(0,10), pady=10)
-        
-        # Barra de progreso
-        self.progress_bar = ctk.CTkProgressBar(button_frame)
-        self.progress_bar.pack(side="right", padx=(10,0), pady=10, fill="x", expand=True)
+        self.progress_bar = ctk.CTkProgressBar(run_frame)
+        self.progress_bar.pack(fill="x", padx=20, pady=5)
         self.progress_bar.set(0)
+        
+        self.time_label = ctk.CTkLabel(run_frame, text="", text_color="gray")
+        self.time_label.pack(pady=2)
 
-        # Zona de estado
-        status_frame = ctk.CTkFrame(main_frame)
-        status_frame.pack(fill="x", padx=20, pady=(10,10))
+        # Logs (Expansible)
+        ctk.CTkLabel(run_frame, text="Registro:").pack(anchor="w", padx=20, pady=(10,0))
+        self.log_text = ctk.CTkTextbox(run_frame, height=100)
+        self.log_text.pack(fill="both", expand=True, padx=20, pady=10)
 
-        ctk.CTkLabel(status_frame, text="Estado:", font=ctk.CTkFont(weight="bold")).pack(anchor="w", padx=10, pady=(10,5))
+    def setup_text_tab(self):
+        ctrl_frame = ctk.CTkFrame(self.tab_text, height=40)
+        ctrl_frame.pack(fill="x", padx=10, pady=5)
 
-        self.status_label = ctk.CTkLabel(
-            status_frame,
-            text="Esperando...",
-            font=ctk.CTkFont(size=14),
-            anchor="w",
-            justify="left"
-        )
-        self.status_label.pack(fill="x", padx=10, pady=(0,5))
+        ctk.CTkButton(ctrl_frame, text="🔄 Recargar desde Archivo", command=self.load_preview).pack(side="left", padx=5)
+        ctk.CTkLabel(ctrl_frame, text="Aquí puedes editar el texto manualmente si encuentras errores.", text_color="gray").pack(side="left", padx=10)
 
-        # Etiqueta de tiempo estimado
-        self.time_label = ctk.CTkLabel(
-            status_frame,
-            text="",
-            font=ctk.CTkFont(size=12),
-            anchor="w",
-            text_color="gray"
-        )
-        self.time_label.pack(fill="x", padx=10, pady=(0,10))
+        self.preview_text = ctk.CTkTextbox(self.tab_text, wrap="word") 
+        self.preview_text.pack(fill="both", expand=True, padx=10, pady=10)
 
-        # Área de logs
-        log_frame = ctk.CTkFrame(main_frame)
-        log_frame.pack(fill="both", expand=True, padx=20, pady=(0,20))
+    # --- LÓGICA ---
+    def save_current_config(self):
+        self.config["voice"] = self.selected_voice.get()
+        self.config["rate"] = self.rate_value.get()
+        self.config["chunking_strategy"] = self.chunking_strategy.get()
+        self.config["retries"] = self.retries_value.get()
+        config_manager.save_config(self.config)
 
-        ctk.CTkLabel(log_frame, text="Logs:", font=ctk.CTkFont(weight="bold")).pack(anchor="w", padx=10, pady=(10,5))
-
-        self.log_text = ctk.CTkTextbox(log_frame, height=150)
-        self.log_text.pack(fill="both", expand=True, padx=10, pady=(0,10))
-    
     def browse_text_file(self):
-        """Abrir diálogo para seleccionar archivo de texto"""
+        initial_dir = self.config.get("last_input_directory", "/")
         file_path = filedialog.askopenfilename(
-            title="Seleccionar archivo de texto",
-            filetypes=[("Archivos de texto", "*.txt"), ("Todos los archivos", "*.*")]
+            initialdir=initial_dir,
+            title="Seleccionar archivo",
+            filetypes=[("Archivos soportados", "*.txt *.pdf *.epub"), ("Todos", "*.*")]
         )
         if file_path:
             self.text_file_path.set(file_path)
-            # Auto-completar nombre de salida
+            self.config["last_input_directory"] = os.path.dirname(file_path)
             if not self.output_file_name.get():
-                base_name = os.path.splitext(os.path.basename(file_path))[0]
-                self.output_file_name.set(base_name)
-    
-    def show_voices_window(self):
-        """Mostrar ventana con todas las voces disponibles"""
-        voices_window = ctk.CTkToplevel(self.root)
-        voices_window.title("Voces Disponibles")
-        voices_window.geometry("600x400")
+                self.output_file_name.set(os.path.splitext(os.path.basename(file_path))[0])
+            
+            # Auto-cargar preview al seleccionar archivo
+            self.load_preview()
+
+    def load_preview(self):
+        file_path = self.text_file_path.get()
+        if not file_path or not os.path.exists(file_path):
+            return # Silent fail or simple ignore
         
-        # Crear lista de voces
-        voices_frame = ctk.CTkFrame(voices_window)
-        voices_frame.pack(fill="both", expand=True, padx=20, pady=20)
+        self.preview_text.delete("1.0", "end")
+        self.preview_text.insert("1.0", "Procesando texto...")
         
-        ctk.CTkLabel(voices_frame, text="Cargando voces...", font=ctk.CTkFont(size=16)).pack(pady=20)
-        
-        # Ejecutar en hilo separado
-        def load_voices():
+        def _load():
             try:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                voices = loop.run_until_complete(list_available_voices())
-                loop.close()
-                
-                # Actualizar UI en el hilo principal
-                self.root.after(0, lambda: self.update_voices_window(voices_window))
+                # Usamos el nuevo extractor que ya limpia
+                text = get_text_content(file_path)
+                self.root.after(0, lambda: self._update_preview(text))
             except Exception as e:
-                self.root.after(0, lambda: messagebox.showerror("Error", f"Error al cargar voces: {e}"))
+                self.root.after(0, lambda: messagebox.showerror("Error", str(e)))
         
-        threading.Thread(target=load_voices, daemon=True).start()
-    
-    def update_voices_window(self, window):
-        """Actualizar ventana de voces con la lista cargada"""
-        # Limpiar contenido anterior
-        for widget in window.winfo_children():
-            widget.destroy()
-        
-        # Crear nueva interfaz
-        main_frame = ctk.CTkFrame(window)
-        main_frame.pack(fill="both", expand=True, padx=20, pady=20)
-        
-        ctk.CTkLabel(main_frame, text="Voces Disponibles", font=ctk.CTkFont(size=18, weight="bold")).pack(pady=(0,20))
-        
-        # Crear scrollable frame para las voces
-        scroll_frame = ctk.CTkScrollableFrame(main_frame)
-        scroll_frame.pack(fill="both", expand=True)
-        
-        # Aquí podrías agregar las voces dinámicamente
-        # Por ahora, mostrar un mensaje
-        ctk.CTkLabel(scroll_frame, text="Usa el comando --list-voices en CLI para ver todas las voces").pack(pady=20)
-        
-        ctk.CTkButton(window, text="Cerrar", command=window.destroy).pack(pady=10)
-    
+        threading.Thread(target=_load, daemon=True).start()
+
+    def _update_preview(self, text):
+        self.preview_text.delete("1.0", "end")
+        self.preview_text.insert("1.0", text)
+        # Cambiar foco a pestaña texto si el usuario quiere ver
+        # self.tabview.set("Texto & Edición") # Opcional: no forzar cambio
+
     def log_message(self, message):
-        """Agregar mensaje al log"""
         timestamp = datetime.now().strftime("%H:%M:%S")
-        formatted_message = f"[{timestamp}] {message}\n"
-        self.log_queue.put(formatted_message)
+        self.log_queue.put(f"[{timestamp}] {message}\n")
 
-    def update_status(self, status_text):
-        """Actualizar zona de estado (sin acumular)"""
-        self.root.after(0, lambda: self.status_label.configure(text=status_text))
-
-    def update_progress(self, current, total):
-        """Actualizar barra de progreso y calcular tiempo estimado"""
-        import time
-        from datetime import timedelta
-
-        if self.start_time is None:
-            self.start_time = time.time()
-            self.total_chunks = total
-
-        progress = current / total if total > 0 else 0
-        self.root.after(0, lambda: self.progress_bar.set(progress))
-
-        # Calcular tiempo estimado
-        if current > 0:
-            elapsed = time.time() - self.start_time
-            avg_time_per_chunk = elapsed / current
-            remaining_chunks = total - current
-            estimated_remaining = avg_time_per_chunk * remaining_chunks
-
-            percentage = (current / total * 100) if total > 0 else 0
-            time_str = str(timedelta(seconds=int(estimated_remaining)))
-
-            info_text = f"{percentage:.0f}% ({current}/{total}) - Tiempo restante: {time_str}"
-            self.root.after(0, lambda: self.time_label.configure(text=info_text))
-    
     def update_log(self):
-        """Actualizar área de logs desde la cola"""
         try:
             while True:
-                message = self.log_queue.get_nowait()
-                self.log_text.insert("end", message)
+                msg = self.log_queue.get_nowait()
+                self.log_text.insert("end", msg)
                 self.log_text.see("end")
         except queue.Empty:
             pass
-        
-        # Programar próxima actualización
         self.root.after(100, self.update_log)
-    
+
+    def update_status(self, text):
+        self.root.after(0, lambda: self.status_label.configure(text=text))
+        self.log_message(text)
+
+    def update_progress(self, current, total):
+        # (Misma logica de progreso)
+        import time
+        from datetime import timedelta
+        if self.start_time is None: self.start_time = time.time()
+        progress = current / total if total > 0 else 0
+        
+        if current > 0:
+            elapsed = time.time() - self.start_time
+            avg = elapsed / current
+            rem = (total - current) * avg
+            time_str = str(timedelta(seconds=int(rem)))
+        else:
+            time_str = "--:--"
+            
+        self.root.after(0, lambda: [
+            self.progress_bar.set(progress),
+            self.time_label.configure(text=f"{int(progress*100)}% - Restante: {time_str}")
+        ])
+
     def create_audiobook(self):
-        """Crear audiolibro en hilo separado"""
         if not self.text_file_path.get():
-            messagebox.showerror("Error", "Debes seleccionar un archivo de texto")
+            messagebox.showerror("Error", "Selecciona un archivo.")
             return
-        
-        if not os.path.exists(self.text_file_path.get()):
-            messagebox.showerror("Error", "El archivo de texto no existe")
-            return
-        
-        # Deshabilitar botón durante el proceso
-        self.create_button.configure(state="disabled")
-        self.stop_button.configure(state="normal")
-        self.progress_bar.set(0)
-        
-        # Limpiar logs y resetear estado
-        self.log_text.delete("1.0", "end")
-        self.status_label.configure(text="Iniciando proceso...")
-        self.time_label.configure(text="")
+
+        self.save_current_config()
+        self.create_button.configure(state="disabled", fg_color="gray")
         self.start_time = None
-        self.total_chunks = 0
+        self.log_text.delete("1.0", "end")
+
+        # IMPORTANTE: Usar el texto del PREVIEW si ha sido editado, o cargar archivo si no?
+        # Para consistencia con la edición manual:
+        # Deberíamos "guardar" el contenido del preview en un archivo temporal o pasarlo directamente.
+        # process_audiobook_creation actualmente lee del archivo.
+        # MODIFICACION REQUERIDA: process_audiobook_creation debería aceptar texto raw o path.
+        # Por ahora, para no romper compatibilidad masiva, guardaremos el contenido del textbox en un temp file
+        # y pasaremos ESE temp file al procesador.
         
-        # Ejecutar en hilo separado
-        def run_creation():
+        edited_text = self.preview_text.get("1.0", "end-1c")
+        
+        def _run():
+            temp_file = "temp_processed_input.txt"
             try:
-                # Preparar argumentos
-                output_file = self.output_file_name.get() + ".mp3" if self.output_file_name.get() else None
+                # Guardar texto editado/limpio
+                with open(temp_file, "w", encoding="utf-8") as f:
+                    f.write(edited_text)
 
-                # Crear directorio de salida si no es ruta absoluta
-                if output_file and not os.path.isabs(output_file):
-                    os.makedirs(DEFAULT_OUTPUT_DIR, exist_ok=True)
-                    base_name = os.path.splitext(output_file)[0]
-                    output_dir = os.path.join(DEFAULT_OUTPUT_DIR, base_name)
-                    os.makedirs(output_dir, exist_ok=True)
-                    output_file = os.path.join(output_dir, output_file)
-
-                # Ejecutar proceso
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
                 loop.set_exception_handler(suppress_asyncio_exceptions)
+                
+                out_name = self.output_file_name.get()
+                if not out_name.endswith(".mp3"): out_name += ".mp3"
+                if not os.path.isabs(out_name):
+                    save_dir = self.config.get("last_output_directory", DEFAULT_OUTPUT_DIR)
+                    out_path = os.path.join(save_dir, out_name)
+                    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+                else:
+                    out_path = out_name
 
+                # Usar el archivo temporal como entrada
                 loop.run_until_complete(process_audiobook_creation(
-                    self.text_file_path.get(),
-                    output_file,
+                    temp_file, # <--- USAR FILE TEMPORAL
+                    out_path,
                     self.selected_voice.get(),
                     self.retries_value.get(),
                     self.rate_value.get(),
@@ -370,42 +274,24 @@ class AudiobookCreatorGUI:
                     status_callback=self.update_status,
                     progress_callback=self.update_progress
                 ))
-
                 loop.close()
-
-                # Mostrar mensaje de éxito
-                self.root.after(0, lambda: messagebox.showinfo("Éxito", f"Audiolibro creado exitosamente:\n{output_file}"))
-
+                self.root.after(0, lambda: messagebox.showinfo("Éxito", f"Creado: {out_path}"))
             except Exception as e:
-                self.root.after(0, lambda: messagebox.showerror("Error", f"Error al crear audiolibro: {e}"))
+                self.root.after(0, lambda: messagebox.showerror("Error", str(e)))
             finally:
-                # Restaurar botones
-                self.root.after(0, self.restore_buttons)
-        
-        self.creation_thread = threading.Thread(target=run_creation, daemon=True)
-        self.creation_thread.start()
-    
-    def stop_process(self):
-        """Detener proceso de creación"""
-        # Implementar lógica de detención si es necesario
-        messagebox.showinfo("Info", "Proceso detenido")
-        self.restore_buttons()
-    
-    def restore_buttons(self):
-        """Restaurar estado de botones"""
-        self.create_button.configure(state="normal")
-        self.stop_button.configure(state="disabled")
-        self.progress_bar.set(1.0)
-        if "Completado" not in self.status_label.cget("text"):
-            self.status_label.configure(text="Listo")
-            self.time_label.configure(text="")
-    
+                if os.path.exists(temp_file): os.remove(temp_file)
+                self.root.after(0, self.restore_ui)
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    def restore_ui(self):
+        self.create_button.configure(state="normal", fg_color="green")
+        self.status_label.configure(text="Finalizado.")
+
     def run(self):
-        """Ejecutar la aplicación"""
         self.root.mainloop()
 
 def main():
-    """Función principal para la GUI"""
     app = AudiobookCreatorGUI()
     app.run()
 

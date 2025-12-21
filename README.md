@@ -1,6 +1,6 @@
 # Generador de Audiolibros con Edge-TTS
 
-Este es un script de Python para la línea de comandos (CLI) que convierte archivos de texto (`.txt`) en audiolibros (`.mp3`) utilizando el potente y natural motor de Texto a Voz (TTS) de Microsoft Edge.
+Este es un script de Python que convierte archivos de texto (`.txt`), libros electrónicos (`.epub`) y documentos (`.pdf`) en audiolibros (`.mp3`) utilizando el motor de Microsoft Edge TTS.
 
 La herramienta está diseñada para ser robusta, eficiente y fácil de usar, ideal para procesar textos largos sin interrupciones.
 
@@ -14,7 +14,10 @@ La herramienta está diseñada para ser robusta, eficiente y fácil de usar, ide
 - **Anti-Suspensión**: Evita que el equipo entre en modo de suspensión durante la creación de audiolibros largos (solo en Windows).
 - **Interfaz Amigable**: Usa la librería `rich` para una experiencia en la consola clara y atractiva, con barras de progreso y tiempo restante estimado.
 - **Autonomía**: No requiere instalar Microsoft Edge ni una clave de API.
-- **Interfaz Gráfica Moderna**: Nueva GUI con CustomTkinter para usuarios que prefieren interfaces visuales.
+- **Soporte Multi-formato**: Lee archivos `.txt`, `.pdf` y `.epub` de forma nativa.
+- **Limpieza Inteligente de Texto**: Algoritmo que une líneas rotas y respeta párrafos reales, ideal para PDF y EPUB.
+- **Configuración Persistente**: Guarda tus preferencias (voz, velocidad, carpetas) en un archivo `config.json`.
+- **Interfaz Gráfica Moderna**: Nueva GUI con CustomTkinter para una experiencia visual completa.
 
 ## 🚀 Uso
 
@@ -42,8 +45,14 @@ python main.py --cli
 
 **O usar el script original:**
 ```bash
-python audiolibro_creator.py -t "tu_libro.txt"
+python audiolibro_creator.py -t "tu_libro.epub"
 ```
+
+### Formatos Soportados
+
+- **TXT**: Archivos de texto plano (UTF-8 o Latin-1).
+- **PDF**: Extrae texto manteniendo la estructura de párrafos.
+- **EPUB**: Lee el contenido de libros electrónicos conservando la fluidez del texto.
 
 ### Listar Voces Disponibles
 
@@ -92,7 +101,18 @@ La nueva interfaz gráfica ofrece todas las funcionalidades del CLI con una expe
 2. **Configurar opciones**: Ajusta voz, velocidad y otros parámetros
 3. **Crear audiolibro**: Haz clic en "Crear Audiolibro"
 4. **Seguir progreso**: Observa los logs en tiempo real
-5. **¡Listo!**: El archivo se guarda en `D:\AUDIOLIBROS\[nombre]\`
+5. **¡Listo!**: El archivo se guarda en la ruta configurada (por defecto `D:\AUDIOLIBROS\`).
+
+## ⚙️ Configuración
+
+El proyecto utiliza un archivo `config.json` para persistir tus preferencias entre sesiones.
+
+### Parámetros Guardados:
+- `voice`: Voz por defecto.
+- `rate`: Velocidad de habla.
+- `chunking_strategy`: Estrategia de fragmentación.
+- `last_input_directory`: Última carpeta donde buscaste un libro.
+- `last_output_directory`: Carpeta base para los audiolibros creados.
 
 ## 🔧 Cómo Funciona
 
