@@ -1,5 +1,7 @@
 import argparse
 import asyncio
+import hashlib
+import json
 import os
 import sys
 import time
@@ -25,7 +27,8 @@ logging.getLogger("aiohttp").setLevel(logging.CRITICAL)
 console = Console()
 
 # --- Constantes ---
-TEMP_DIR = "temp_audio_chunks"
+PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
+TEMP_DIR = os.path.join(PROJECT_DIR, "temp_audio_chunks")
 DEFAULT_OUTPUT_DIR = "D:\\AUDIOLIBROS"
 DEFAULT_RETRIES = 3
 CHUNK_MAX_SIZE = 2500  # Caracteres máximos por fragmento para evitar problemas con la API
@@ -198,8 +201,101 @@ def chunk_text(text: str, strategy: str) -> list[str]:
     else:
         return chunk_text_smart(text)
 
+def build_job_id(text_chunks: list[str], voice: str, rate: str, strategy: str) -> str:
+    """Builds a stable identity for chunks that are safe to resume."""
+    job_data = {
+        "format_version": 1,
+        "chunks": text_chunks,
+        "voice": voice,
+        "rate": rate,
+        "strategy": strategy,
+    }
+    serialized = json.dumps(
+        job_data, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return hashlib.sha256(serialized).hexdigest()
+
+def acquire_job_lock(job_id: str, temp_root: str = TEMP_DIR):
+    """Acquires a non-blocking OS lock for one deterministic job."""
+    lock_dir = os.path.join(temp_root, ".locks")
+    os.makedirs(lock_dir, exist_ok=True)
+    lock_path = os.path.join(lock_dir, f"{job_id}.lock")
+    lock_file = open(lock_path, "a+b")
+
+    try:
+        lock_file.seek(0, os.SEEK_END)
+        if lock_file.tell() == 0:
+            lock_file.write(b"0")
+            lock_file.flush()
+        lock_file.seek(0)
+
+        if sys.platform == "win32":
+            import msvcrt
+
+            msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError as exc:
+        lock_file.close()
+        raise RuntimeError(
+            "Este mismo audiolibro ya se está generando en otra instancia."
+        ) from exc
+
+    return lock_file
+
+def release_job_lock(lock_file):
+    """Releases a lock returned by acquire_job_lock."""
+    if lock_file is None or lock_file.closed:
+        return
+
+    try:
+        lock_file.seek(0)
+        if sys.platform == "win32":
+            import msvcrt
+
+            msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+    finally:
+        lock_file.close()
+
+def get_ordered_chunk_files(temp_dir: str, expected_count: int) -> list[str]:
+    """Returns the exact expected chunk set or rejects inconsistent state."""
+    if expected_count <= 0:
+        raise RuntimeError("No hay fragmentos de audio para concatenar.")
+
+    expected_names = [f"chunk_{index:04d}.mp3" for index in range(expected_count)]
+    expected_set = set(expected_names)
+    actual_set = {
+        name for name in os.listdir(temp_dir) if name.lower().endswith(".mp3")
+    }
+
+    if actual_set != expected_set:
+        missing = sorted(expected_set - actual_set)
+        extra = sorted(actual_set - expected_set)
+        details = []
+        if missing:
+            details.append(f"faltan: {', '.join(missing[:5])}")
+        if extra:
+            details.append(f"sobran o son inválidos: {', '.join(extra[:5])}")
+        raise RuntimeError("Conjunto de fragmentos incoherente; " + "; ".join(details))
+
+    ordered_files = [os.path.join(temp_dir, name) for name in expected_names]
+    empty_files = [path for path in ordered_files if os.path.getsize(path) == 0]
+    if empty_files:
+        raise RuntimeError(
+            f"El fragmento está vacío: {os.path.basename(empty_files[0])}"
+        )
+
+    return ordered_files
+
 async def synthesize_chunk(text: str, voice: str, output_path: str, rate: str) -> bool:
     """Sintetiza un solo fragmento de texto a audio usando la librería edge_tts."""
+    partial_path = output_path + ".part"
     try:
         from edge_tts import Communicate
         
@@ -207,38 +303,34 @@ async def synthesize_chunk(text: str, voice: str, output_path: str, rate: str) -
         if not text.strip():
             return True # Considerado un éxito para no detener el proceso
 
+        if os.path.exists(partial_path):
+            os.remove(partial_path)
+
         communicate = Communicate(text, voice, rate=rate)
-        await communicate.save(output_path)
+        await communicate.save(partial_path)
+        if not os.path.exists(partial_path) or os.path.getsize(partial_path) == 0:
+            raise RuntimeError("Edge TTS no generó audio para el fragmento.")
+        os.replace(partial_path, output_path)
         return True
     except Exception as e:
+        if os.path.exists(partial_path):
+            os.remove(partial_path)
+
         # La librería puede lanzar una excepción si el texto está vacío después de sus propios filtros,
         # la capturamos aquí para evitar que el programa se detenga.
-        if "No text to speak" in str(e):
-            return True # No es un error real, el fragmento estaba vacío.
-        
         console.print(f"\n[bold red]Error de la librería edge-tts al procesar un fragmento: {e}[/bold red]")
         return False
 
-async def concatenate_chunks(output_file: str):
+async def concatenate_chunks(output_file: str, temp_dir: str, expected_count: int):
     """Concatena todos los archivos MP3 usando ffmpeg directamente."""
     console.print("\n[bold cyan]Concatenando archivos de audio con ffmpeg...[/bold cyan]")
 
     # 1. Obtener la ruta absoluta del directorio temporal y del archivo de salida
-    temp_dir_abs = os.path.abspath(TEMP_DIR)
+    temp_dir_abs = os.path.abspath(temp_dir)
     output_file_abs = os.path.abspath(output_file)
 
-    # 2. Obtener la lista ordenada de rutas de archivo ABSOLUTAS
-    try:
-        chunk_files_abs = sorted(
-            [os.path.join(temp_dir_abs, f) for f in os.listdir(temp_dir_abs) if f.endswith(".mp3")],
-            key=lambda f: int(os.path.basename(f).split('_')[1].split('.')[0])
-        )
-        if not chunk_files_abs:
-            console.print("[bold red]Error: No se encontraron fragmentos de audio para concatenar.[/bold red]")
-            sys.exit(1)
-    except Exception as e:
-        console.print(f"[bold red]Error al listar los fragmentos de audio: {e}[/bold red]")
-        sys.exit(1)
+    # 2. Obtener y validar la lista completa en orden numérico.
+    chunk_files_abs = get_ordered_chunk_files(temp_dir_abs, expected_count)
 
     # 3. Crear un archivo temporal con la lista de archivos para ffmpeg
     filelist_path_abs = os.path.join(temp_dir_abs, "filelist.txt")
@@ -261,25 +353,29 @@ async def concatenate_chunks(output_file: str):
         _, stderr = await process.communicate()
 
         if process.returncode != 0:
-            console.print("[bold red]Error durante la concatenación con ffmpeg:[/bold red]")
-            console.print(stderr.decode())
-            sys.exit(1)
+            error_detail = stderr.decode(errors="replace").strip()
+            raise RuntimeError(
+                f"Error durante la concatenación con FFmpeg: {error_detail}"
+            )
 
-    except FileNotFoundError:
-        console.print("[bold red]Error: `ffmpeg` no encontrado. Asegúrate de que esté instalado y en el PATH.[/bold red]")
-        sys.exit(1)
+    except FileNotFoundError as exc:
+        raise RuntimeError(
+            "FFmpeg no se encontró en C:\\ffmpeg\\bin\\ffmpeg.exe."
+        ) from exc
+    except RuntimeError:
+        raise
     except Exception as e:
-        console.print(f"[bold red]Ocurrió un error inesperado al ejecutar ffmpeg: {e}[/bold red]")
-        sys.exit(1)
+        raise RuntimeError(f"Error inesperado al ejecutar FFmpeg: {e}") from e
 
 
-def cleanup():
-    """Elimina el directorio temporal si existe."""
-    if os.path.isdir(TEMP_DIR):
-        shutil.rmtree(TEMP_DIR)
+def cleanup(job_temp_dir: str):
+    """Elimina únicamente los temporales del trabajo completado."""
+    if os.path.isdir(job_temp_dir):
+        shutil.rmtree(job_temp_dir)
 
 async def process_audiobook_creation(text_file: str, output_file: str, voice: str, retries: int, rate: str, chunking_strategy: str, status_callback=None, progress_callback=None):
     """Función orquestadora principal para la creación del audiolibro."""
+    job_lock_file = None
     prevent_sleep()
     try:
         start_time = time.monotonic()
@@ -309,14 +405,18 @@ async def process_audiobook_creation(text_file: str, output_file: str, voice: st
         except FileNotFoundError:
             if not is_gui_mode:
                 console.print(f"[bold red]Error: El archivo '{text_file}' no fue encontrado.[/bold red]")
-            sys.exit(1)
+            raise RuntimeError(f"El archivo '{text_file}' no fue encontrado.")
         except Exception as e:
             if not is_gui_mode:
                 console.print(f"[bold red]Error al leer y procesar el archivo: {e}[/bold red]")
-            sys.exit(1)
+            raise RuntimeError(f"Error al leer y procesar el archivo: {e}") from e
 
         text_chunks = chunk_text(text, chunking_strategy)
         total_chunks = len(text_chunks)
+        job_id = build_job_id(text_chunks, voice, rate, chunking_strategy)
+        job_lock_file = acquire_job_lock(job_id)
+        job_temp_dir = os.path.join(TEMP_DIR, job_id)
+        os.makedirs(job_temp_dir, exist_ok=True)
 
         # --- Barra de Progreso ---
         progress_columns = [
@@ -341,7 +441,7 @@ async def process_audiobook_creation(text_file: str, output_file: str, voice: st
                 task = progress.add_task("Procesando fragmentos...", total=total_chunks)
 
             for i, chunk in enumerate(text_chunks):
-                chunk_filename = os.path.join(TEMP_DIR, f"chunk_{i:04d}.mp3")
+                chunk_filename = os.path.join(job_temp_dir, f"chunk_{i:04d}.mp3")
 
                 # Actualizar estado en GUI si existe callback
                 if status_callback:
@@ -374,7 +474,9 @@ async def process_audiobook_creation(text_file: str, output_file: str, voice: st
                     if not is_gui_mode:
                         console.print(f"[bold red]ERROR FATAL:[/bold red] No se pudo generar el fragmento {i+1} después de {retries} intentos. Abortando.")
                     # No se borra la carpeta para poder revisar los logs o archivos.
-                    sys.exit(1)
+                    raise RuntimeError(
+                        f"No se pudo generar el fragmento {i+1} después de {retries} intentos."
+                    )
 
                 if not is_gui_mode:
                     progress.update(task, advance=1)
@@ -386,8 +488,8 @@ async def process_audiobook_creation(text_file: str, output_file: str, voice: st
         if progress_callback:
             progress_callback(total_chunks, total_chunks)
 
-        await concatenate_chunks(output_file)
-        cleanup()
+        await concatenate_chunks(output_file, job_temp_dir, total_chunks)
+        cleanup(job_temp_dir)
 
         # --- Panel de Éxito ---
         end_time = time.monotonic()
@@ -407,6 +509,7 @@ async def process_audiobook_creation(text_file: str, output_file: str, voice: st
                 border_style="green"
             ))
     finally:
+        release_job_lock(job_lock_file)
         allow_sleep()
 
 def suppress_asyncio_exceptions(loop, context):
@@ -481,4 +584,4 @@ if __name__ == "__main__":
     except Exception as e:
         console.print(f"\n[bold red]Ha ocurrido un error inesperado en la ejecución: {e}[/bold red]")
         # Tampoco se llama a cleanup() para permitir la depuración.
-        sys.exit(1) 
+        sys.exit(1)

@@ -120,7 +120,7 @@ El proyecto utiliza un archivo `config.json` para persistir tus preferencias ent
 
 El script maneja los directorios de la siguiente manera:
 
-- **Fragmentos temporales**: Se crean en la carpeta del proyecto (`temp_audio_chunks/`)
+- **Fragmentos temporales**: Se crean en una subcarpeta exclusiva del trabajo (`temp_audio_chunks/[identificador]/`)
 - **Archivo final**: Por defecto se guarda en `D:\AUDIOLIBROS\[nombre_del_archivo]\`
 - **Organización**: Cada audiolibro tiene su propia carpeta con el mismo nombre que el archivo final
 
@@ -163,7 +163,7 @@ El script ofrece dos estrategias diferentes:
 1. **Lectura del Archivo**: El script lee completamente tu archivo de texto.
 2. **Fragmentación**: Divide el texto usando la estrategia seleccionada.
 3. **Creación de Fragmentos de Audio**: 
-   - Crea una carpeta temporal `temp_audio_chunks/`
+   - Crea una subcarpeta temporal exclusiva dentro de `temp_audio_chunks/`
    - Convierte cada fragmento de texto a audio MP3 individual
    - Los archivos se nombran como `chunk_0000.mp3`, `chunk_0001.mp3`, etc.
 4. **Concatenación Final**: 
@@ -174,17 +174,20 @@ El script ofrece dos estrategias diferentes:
 ### Sistema de Reanudación
 
 Si interrumpes el proceso:
-- **Los fragmentos ya creados se conservan** en la carpeta `temp_audio_chunks/`
-- **Al volver a ejecutar**, el script detecta los fragmentos existentes
+- **Los fragmentos ya creados se conservan** en una subcarpeta identificada por el texto, la voz, la velocidad y la estrategia
+- **Al volver a ejecutar el mismo trabajo**, el script detecta únicamente sus propios fragmentos
 - **Continúa desde donde se quedó**, sin perder el progreso
+- **Un libro o una configuración diferente nunca reutiliza esos fragmentos**
+- **Los fragmentos incompletos no se aceptan**: solo se renombran como MP3 después de terminar correctamente
+- **Una segunda instancia no puede generar simultáneamente el mismo trabajo**
 - **Solo se borran los temporales** cuando el proceso termina con éxito
 
 ### Archivos Temporales
 
 Durante el proceso se crean en la carpeta del proyecto:
-- `temp_audio_chunks/chunk_0000.mp3` - Primer fragmento
-- `temp_audio_chunks/chunk_0001.mp3` - Segundo fragmento
-- `temp_audio_chunks/filelist.txt` - Lista para FFmpeg
+- `temp_audio_chunks/[identificador]/chunk_0000.mp3` - Primer fragmento
+- `temp_audio_chunks/[identificador]/chunk_0001.mp3` - Segundo fragmento
+- `temp_audio_chunks/[identificador]/filelist.txt` - Lista para FFmpeg
 - ... y así sucesivamente
 
 **Nota**: Estos archivos se eliminan automáticamente al finalizar, pero se conservan si interrumpes el proceso. El archivo final se guarda en `D:\AUDIOLIBROS\[nombre_del_archivo]\` por defecto.
@@ -199,4 +202,4 @@ Las dependencias de Python se instalan fácilmente con:
 pip install -r requirements.txt
 ```
 
-**Nota**: Para usar la interfaz gráfica, se requiere `customtkinter` que ya está incluido en `requirements.txt`. 
+**Nota**: Para usar la interfaz gráfica, se requiere `customtkinter` que ya está incluido en `requirements.txt`.

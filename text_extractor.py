@@ -30,10 +30,33 @@ def extract_from_epub(file_path):
         book = epub.read_epub(file_path)
         text_content = []
 
-        for item in book.get_items():
-            if item.get_type() == ebooklib.ITEM_DOCUMENT:
+        spine_text = []
+        seen_ids = set()
+        for spine_entry in book.spine:
+            item_id = spine_entry[0] if isinstance(spine_entry, (tuple, list)) else spine_entry
+            item = book.get_item_with_id(item_id)
+            if item is None or item.get_type() != ebooklib.ITEM_DOCUMENT:
+                continue
+            if item.get_id() not in seen_ids:
+                seen_ids.add(item.get_id())
                 soup = BeautifulSoup(item.get_body_content(), 'html.parser')
-                text_content.append(soup.get_text())
+                item_text = soup.get_text()
+                if item_text.strip():
+                    spine_text.append(item_text)
+
+        if spine_text:
+            text_content = spine_text
+        else:
+            for item in book.get_items():
+                if item.get_type() != ebooklib.ITEM_DOCUMENT:
+                    continue
+                soup = BeautifulSoup(item.get_body_content(), 'html.parser')
+                item_text = soup.get_text()
+                if item_text.strip():
+                    text_content.append(item_text)
+
+        if not text_content:
+            raise ValueError("El EPUB no contiene documentos legibles.")
         
         return "\n".join(text_content)
     except Exception as e:

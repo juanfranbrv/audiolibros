@@ -5,6 +5,7 @@ import threading
 import asyncio
 import sys
 import os
+import tempfile
 from datetime import datetime
 import queue
 
@@ -21,6 +22,36 @@ import config_manager
 # Configurar CustomTkinter
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
+
+def default_output_name(file_path):
+    return os.path.splitext(os.path.basename(file_path))[0]
+
+def capture_generation_settings(gui):
+    return {
+        "output_name": gui.output_file_name.get(),
+        "output_directory": gui.config.get("last_output_directory", DEFAULT_OUTPUT_DIR),
+        "voice": gui.selected_voice.get(),
+        "retries": gui.retries_value.get(),
+        "rate": gui.rate_value.get(),
+        "strategy": gui.chunking_strategy.get(),
+    }
+
+def create_processed_input_file(text):
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        suffix=".txt",
+        prefix="audiolibro_",
+        delete=False,
+    ) as temp_file:
+        temp_file.write(text)
+        return temp_file.name
+
+def schedule_error_dialog(root, error_message):
+    root.after(
+        0,
+        lambda message=error_message: messagebox.showerror("Error", message),
+    )
 
 class AudiobookCreatorGUI:
     def __init__(self):
@@ -44,6 +75,7 @@ class AudiobookCreatorGUI:
         # Cola y Estado
         self.log_queue = queue.Queue()
         self.start_time = None
+        self.loaded_preview_path = None
         
         self.setup_ui()
         self.update_log()
@@ -155,8 +187,7 @@ class AudiobookCreatorGUI:
         if file_path:
             self.text_file_path.set(file_path)
             self.config["last_input_directory"] = os.path.dirname(file_path)
-            if not self.output_file_name.get():
-                self.output_file_name.set(os.path.splitext(os.path.basename(file_path))[0])
+            self.output_file_name.set(default_output_name(file_path))
             
             # Auto-cargar preview al seleccionar archivo
             self.load_preview()
@@ -166,6 +197,7 @@ class AudiobookCreatorGUI:
         if not file_path or not os.path.exists(file_path):
             return # Silent fail or simple ignore
         
+        self.loaded_preview_path = None
         self.preview_text.delete("1.0", "end")
         self.preview_text.insert("1.0", "Procesando texto...")
         
@@ -173,11 +205,31 @@ class AudiobookCreatorGUI:
             try:
                 # Usamos el nuevo extractor que ya limpia
                 text = get_text_content(file_path)
-                self.root.after(0, lambda: self._update_preview(text))
+                self.root.after(
+                    0,
+                    lambda path=file_path, content=text: self._apply_preview_if_current(
+                        path, content
+                    ),
+                )
             except Exception as e:
-                self.root.after(0, lambda: messagebox.showerror("Error", str(e)))
+                error_message = str(e)
+                self.root.after(
+                    0,
+                    lambda path=file_path, message=error_message: self._show_preview_error_if_current(
+                        path, message
+                    ),
+                )
         
         threading.Thread(target=_load, daemon=True).start()
+
+    def _apply_preview_if_current(self, file_path, text):
+        if self.text_file_path.get() == file_path:
+            self.loaded_preview_path = file_path
+            self._update_preview(text)
+
+    def _show_preview_error_if_current(self, file_path, error_message):
+        if self.text_file_path.get() == file_path:
+            messagebox.showerror("Error", error_message)
 
     def _update_preview(self, text):
         self.preview_text.delete("1.0", "end")
@@ -227,6 +279,11 @@ class AudiobookCreatorGUI:
         if not self.text_file_path.get():
             messagebox.showerror("Error", "Selecciona un archivo.")
             return
+        if self.loaded_preview_path != self.text_file_path.get():
+            messagebox.showerror(
+                "Error", "Espera a que termine de cargarse el texto del libro."
+            )
+            return
 
         self.save_current_config()
         self.create_button.configure(state="disabled", fg_color="gray")
@@ -242,22 +299,23 @@ class AudiobookCreatorGUI:
         # y pasaremos ESE temp file al procesador.
         
         edited_text = self.preview_text.get("1.0", "end-1c")
+        generation_settings = capture_generation_settings(self)
         
         def _run():
-            temp_file = "temp_processed_input.txt"
+            temp_file = None
+            loop = None
+            final_status = "Error."
             try:
-                # Guardar texto editado/limpio
-                with open(temp_file, "w", encoding="utf-8") as f:
-                    f.write(edited_text)
+                temp_file = create_processed_input_file(edited_text)
 
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
                 loop.set_exception_handler(suppress_asyncio_exceptions)
                 
-                out_name = self.output_file_name.get()
+                out_name = generation_settings["output_name"]
                 if not out_name.endswith(".mp3"): out_name += ".mp3"
                 if not os.path.isabs(out_name):
-                    save_dir = self.config.get("last_output_directory", DEFAULT_OUTPUT_DIR)
+                    save_dir = generation_settings["output_directory"]
                     out_path = os.path.join(save_dir, out_name)
                     os.makedirs(os.path.dirname(out_path), exist_ok=True)
                 else:
@@ -267,26 +325,34 @@ class AudiobookCreatorGUI:
                 loop.run_until_complete(process_audiobook_creation(
                     temp_file, # <--- USAR FILE TEMPORAL
                     out_path,
-                    self.selected_voice.get(),
-                    self.retries_value.get(),
-                    self.rate_value.get(),
-                    self.chunking_strategy.get(),
+                    generation_settings["voice"],
+                    generation_settings["retries"],
+                    generation_settings["rate"],
+                    generation_settings["strategy"],
                     status_callback=self.update_status,
                     progress_callback=self.update_progress
                 ))
-                loop.close()
-                self.root.after(0, lambda: messagebox.showinfo("Éxito", f"Creado: {out_path}"))
+                final_status = "Finalizado."
+                self.root.after(
+                    0,
+                    lambda path=out_path: messagebox.showinfo("Éxito", f"Creado: {path}"),
+                )
             except Exception as e:
-                self.root.after(0, lambda: messagebox.showerror("Error", str(e)))
+                schedule_error_dialog(self.root, str(e))
             finally:
-                if os.path.exists(temp_file): os.remove(temp_file)
-                self.root.after(0, self.restore_ui)
+                if loop is not None and not loop.is_closed():
+                    loop.close()
+                if temp_file and os.path.exists(temp_file): os.remove(temp_file)
+                self.root.after(
+                    0,
+                    lambda status=final_status: self.restore_ui(status),
+                )
 
         threading.Thread(target=_run, daemon=True).start()
 
-    def restore_ui(self):
+    def restore_ui(self, status="Finalizado."):
         self.create_button.configure(state="normal", fg_color="green")
-        self.status_label.configure(text="Finalizado.")
+        self.status_label.configure(text=status)
 
     def run(self):
         self.root.mainloop()
@@ -296,4 +362,4 @@ def main():
     app.run()
 
 if __name__ == "__main__":
-    main() 
+    main()
