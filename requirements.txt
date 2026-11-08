@@ -1,6 +1,5 @@
 rich
-edge-tts>=7.2.7
-edge-tts>=7.2.7
+edge-tts>=7.3.1
 customtkinter
 pymupdf
 EbookLib
