@@ -86,6 +86,14 @@ class ChunkValidationTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 self.ordered_files(temp_dir, 1)
 
+    def test_skips_chunks_of_empty_text(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            first = self.create_chunk(temp_dir, "chunk_0000.mp3")
+            third = self.create_chunk(temp_dir, "chunk_0002.mp3")
+            self.assertEqual(
+                creator.get_ordered_chunk_files(temp_dir, 3, {1}), [first, third]
+            )
+
     def test_rejects_an_empty_chunk(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             open(os.path.join(temp_dir, "chunk_0000.mp3"), "wb").close()

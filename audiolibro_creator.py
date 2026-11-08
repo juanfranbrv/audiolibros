@@ -263,12 +263,20 @@ def release_job_lock(lock_file):
     finally:
         lock_file.close()
 
-def get_ordered_chunk_files(temp_dir: str, expected_count: int) -> list[str]:
-    """Returns the exact expected chunk set or rejects inconsistent state."""
-    if expected_count <= 0:
+def get_ordered_chunk_files(temp_dir: str, expected_count: int, skipped_indices=()) -> list[str]:
+    """Returns the exact expected chunk set or rejects inconsistent state.
+
+    skipped_indices: fragmentos de texto vacíos, que no generan MP3.
+    """
+    skipped = set(skipped_indices)
+    expected_names = [
+        f"chunk_{index:04d}.mp3"
+        for index in range(expected_count)
+        if index not in skipped
+    ]
+    if not expected_names:
         raise RuntimeError("No hay fragmentos de audio para concatenar.")
 
-    expected_names = [f"chunk_{index:04d}.mp3" for index in range(expected_count)]
     expected_set = set(expected_names)
     actual_set = {
         name for name in os.listdir(temp_dir) if name.lower().endswith(".mp3")
@@ -321,7 +329,7 @@ async def synthesize_chunk(text: str, voice: str, output_path: str, rate: str) -
         console.print(f"\n[bold red]Error de la librería edge-tts al procesar un fragmento: {e}[/bold red]")
         return False
 
-async def concatenate_chunks(output_file: str, temp_dir: str, expected_count: int):
+async def concatenate_chunks(output_file: str, temp_dir: str, expected_count: int, skipped_indices=()):
     """Concatena todos los archivos MP3 usando ffmpeg directamente."""
     console.print("\n[bold cyan]Concatenando archivos de audio con ffmpeg...[/bold cyan]")
 
@@ -330,7 +338,7 @@ async def concatenate_chunks(output_file: str, temp_dir: str, expected_count: in
     output_file_abs = os.path.abspath(output_file)
 
     # 2. Obtener y validar la lista completa en orden numérico.
-    chunk_files_abs = get_ordered_chunk_files(temp_dir_abs, expected_count)
+    chunk_files_abs = get_ordered_chunk_files(temp_dir_abs, expected_count, skipped_indices)
 
     # 3. Crear un archivo temporal con la lista de archivos para ffmpeg
     filelist_path_abs = os.path.join(temp_dir_abs, "filelist.txt")
@@ -488,7 +496,13 @@ async def process_audiobook_creation(text_file: str, output_file: str, voice: st
         if progress_callback:
             progress_callback(total_chunks, total_chunks)
 
-        await concatenate_chunks(output_file, job_temp_dir, total_chunks)
+        # Los fragmentos vacíos no generan MP3 (ver synthesize_chunk).
+        empty_chunk_indices = {
+            index for index, chunk in enumerate(text_chunks) if not chunk.strip()
+        }
+        await concatenate_chunks(
+            output_file, job_temp_dir, total_chunks, empty_chunk_indices
+        )
         cleanup(job_temp_dir)
 
         # --- Panel de Éxito ---
