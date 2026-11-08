@@ -46,6 +46,20 @@ class JobIdentityTests(unittest.TestCase):
         )
 
 
+class SmartChunkingTests(unittest.TestCase):
+    def test_sentence_longer_than_max_size_produces_no_empty_chunk(self):
+        long_sentence = "palabra " * (creator.CHUNK_MAX_SIZE // 4)
+        text = "Intro corta.\n\n" + long_sentence + "\n\nFinal."
+        chunks = creator.chunk_text_smart(text)
+        self.assertTrue(all(chunk.strip() for chunk in chunks), chunks)
+        self.assertIn(long_sentence.strip(), chunks)
+
+    def test_paragraph_near_max_size_produces_no_empty_chunk(self):
+        paragraph = "a" * (creator.CHUNK_MAX_SIZE - 1)
+        chunks = creator.chunk_text_smart(paragraph + "\n\nFinal.")
+        self.assertEqual(chunks, [paragraph, "Final."])
+
+
 class ChunkValidationTests(unittest.TestCase):
     def ordered_files(self, temp_dir, expected_count):
         self.assertTrue(

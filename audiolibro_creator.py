@@ -172,9 +172,12 @@ def chunk_text_smart(text: str) -> list[str]:
                 if len(oversized_paragraph_chunk) + len(sentence) + 1 < CHUNK_MAX_SIZE:
                     oversized_paragraph_chunk += sentence + " "
                 else:
-                    final_chunks.append(oversized_paragraph_chunk.strip())
+                    # Si la primera frase ya supera el límite, el fragmento
+                    # acumulado está vacío: no se añade.
+                    if oversized_paragraph_chunk.strip():
+                        final_chunks.append(oversized_paragraph_chunk.strip())
                     oversized_paragraph_chunk = sentence + " "
-            if oversized_paragraph_chunk:
+            if oversized_paragraph_chunk.strip():
                 final_chunks.append(oversized_paragraph_chunk.strip())
 
         elif len(current_chunk) + len(paragraph) + 2 < CHUNK_MAX_SIZE:
@@ -184,7 +187,10 @@ def chunk_text_smart(text: str) -> list[str]:
                 current_chunk = paragraph
 
         else:
-            final_chunks.append(current_chunk)
+            # current_chunk puede estar vacío si el párrafo mide casi
+            # CHUNK_MAX_SIZE y es el primero del grupo.
+            if current_chunk:
+                final_chunks.append(current_chunk)
             current_chunk = paragraph
 
     if current_chunk:
